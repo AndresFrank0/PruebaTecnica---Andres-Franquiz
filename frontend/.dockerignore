@@ -1,0 +1,7 @@
+# Fuera del contexto: node_modules y dist se generan dentro de la imagen (npm ci y build); los locales
+# solo harían más pesado el contexto y mezclarían binarios nativos del host con los de Linux.
+# El .env y los *.local (.env.local…) son locales, como en .gitignore, y pueden tener secretos.
+node_modules
+dist
+.env
+*.local

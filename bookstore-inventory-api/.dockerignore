@@ -1,0 +1,6 @@
+# Fuera de la imagen: entorno virtual, bytecode, base de datos local y el .env (puede tener secretos).
+# A diferencia de .gitignore, un patrón sin **/ solo aplica en la raíz del contexto.
+.venv
+**/__pycache__
+db.sqlite3
+.env

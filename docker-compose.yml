@@ -1,0 +1,26 @@
+# API en http://localhost:8000 y SPA en http://localhost:8080: docker compose up --build --wait
+# (--wait espera al HEALTHCHECK del backend, que se da por sano cuando ya aplicó las migraciones).
+services:
+  backend:
+    build: ./bookstore-inventory-api
+    # Solo en 127.0.0.1, como `runserver` y Vite: sin la IP, Docker publica en todas las interfaces y
+    # la API (sin autenticación y con DEBUG) queda abierta a la red local.
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      # SQLite dentro de un volumen: los datos sobreviven a `docker compose down` (no a `down -v`).
+      SQLITE_PATH: /data/db.sqlite3
+    volumes: [db-data:/data]
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # La usa el navegador del host, no el contenedor: por eso es localhost y no http://backend:8000.
+        VITE_API_URL: http://localhost:8000
+    # También en 127.0.0.1: desde otro equipo la SPA llamaría a su propio localhost. Si otro programa ocupa
+    # el 8080 (p. ej. el Apache de EDB PEM), compose puede fallar con "ports are not available": detenerlo
+    # o cambiar el puerto; con otro puerto, su origen tiene que estar en CORS_ALLOWED_ORIGINS (settings.py).
+    ports: ["127.0.0.1:8080:80"]
+    depends_on: [backend]
+
+volumes:
+  db-data:
