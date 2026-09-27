@@ -1,0 +1,761 @@
+{
+  "info": {
+    "name": "Bookstore Inventory API",
+    "description": "API REST de inventario de librerías (prueba técnica de Nextep).\n\nPara probarla entera, ejecútala en orden con el Runner: crea un libro, recorre los 8 endpoints y los casos de error, y al final borra el libro. No depende de los datos de ejemplo y se puede repetir.\n\n`baseUrl` apunta a http://localhost:8000 (runserver o Docker).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Libros",
+      "description": "Recorrido por los endpoints con un libro nuevo.",
+      "item": [
+        {
+          "name": "Crear libro",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// ISBN-13 nuevo en cada ejecución: 978 + los últimos 10 dígitos de la hora actual en ms.",
+                  "pm.collectionVariables.set('isbnSuffix', String(Date.now()).slice(-10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const book = pm.response.json();",
+                  "pm.collectionVariables.set('bookId', book.id);",
+                  "pm.test('Guarda el ISBN sin guiones y sin precio de venta', () => {",
+                  "  pm.expect(book.isbn).to.eql('978' + pm.collectionVariables.get('isbnSuffix'));",
+                  "  pm.expect(book.selling_price_local).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/books",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Ficciones\",\n  \"author\": \"Jorge Luis Borges\",\n  \"isbn\": \"978-{{isbnSuffix}}\",\n  \"cost_usd\": 13.5,\n  \"stock_quantity\": 4,\n  \"category\": \"Literatura Latinoamericana\",\n  \"supplier_country\": \"AR\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Crea el libro que usan las peticiones siguientes y guarda su id en `bookId`.\n\nEl pre-request genera un ISBN distinto en cada ejecución (la API valida la longitud, no el dígito de control): así la colección se puede repetir aunque quede un libro de una ejecución anterior."
+          }
+        },
+        {
+          "name": "Listar libros (paginado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Página con count, next, previous y hasta 10 libros', () => {",
+                  "  const page = pm.response.json();",
+                  "  pm.expect(page).to.have.all.keys('count', 'next', 'previous', 'results');",
+                  "  pm.expect(page.results.length).to.be.at.most(10);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books?page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Página (10 libros por página)"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear libro para ordenar (el más caro)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('expensiveBookId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/books",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Libro más caro (Postman)\",\n  \"author\": \"Postman\",\n  \"isbn\": \"979-{{isbnSuffix}}\",\n  \"cost_usd\": 99999999.99,\n  \"stock_quantity\": 1,\n  \"category\": \"Pruebas\",\n  \"supplier_country\": \"VE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Libro con el costo máximo que acepta la API: la petición siguiente comprueba que, ordenando por costo descendente, sale primero, con o sin los datos de ejemplo cargados. Se borra justo después."
+          }
+        },
+        {
+          "name": "Listar ordenado (costo descendente, 1 por página)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Primero el libro más caro, y solo 1 por página', () => {",
+                  "  const page = pm.response.json();",
+                  "  pm.expect(page.results.length).to.eql(1);",
+                  "  pm.expect(page.results[0].id).to.eql(Number(pm.collectionVariables.get('expensiveBookId')));",
+                  "  pm.expect(page.next).to.include('page_size=1');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books?ordering=-cost_usd&page_size=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books"
+              ],
+              "query": [
+                {
+                  "key": "ordering",
+                  "value": "-cost_usd",
+                  "description": "Campo por el que ordenar (title, author, isbn, category, stock_quantity, cost_usd, selling_price_local); con - delante, descendente. También vale en search y low-stock"
+                },
+                {
+                  "key": "page_size",
+                  "value": "1",
+                  "description": "Libros por página: 10 por defecto, máximo 50"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Eliminar libro para ordenar",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/{{expensiveBookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "{{expensiveBookId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Obtener libro por ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Es el libro creado, con todos los campos del modelo', () => {",
+                  "  const book = pm.response.json();",
+                  "  pm.expect(book.id).to.eql(Number(pm.collectionVariables.get('bookId')));",
+                  "  pm.expect(book).to.have.all.keys('id', 'title', 'author', 'isbn', 'cost_usd', 'selling_price_local',",
+                  "    'stock_quantity', 'category', 'supplier_country', 'created_at', 'updated_at');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/{{bookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "{{bookId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Actualizar libro",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Guarda el costo y el stock nuevos', () => {",
+                  "  const book = pm.response.json();",
+                  "  pm.expect(book.cost_usd).to.eql(14.25);",
+                  "  pm.expect(book.stock_quantity).to.eql(12);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/books/{{bookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "{{bookId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Ficciones\",\n  \"author\": \"Jorge Luis Borges\",\n  \"isbn\": \"978-{{isbnSuffix}}\",\n  \"cost_usd\": 14.25,\n  \"stock_quantity\": 12,\n  \"category\": \"Literatura Latinoamericana\",\n  \"supplier_country\": \"AR\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Reemplaza el libro completo (PUT): se envían todos los campos."
+          }
+        },
+        {
+          "name": "Buscar por categoría",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Solo categorías que contienen «literatura»', () => {",
+                  "  const page = pm.response.json();",
+                  "  pm.expect(page.count).to.be.above(0);",
+                  "  page.results.forEach((book) => pm.expect(book.category.toLowerCase()).to.include('literatura'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/search?category=literatura",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "literatura",
+                  "description": "Coincidencia parcial, sin distinguir mayúsculas"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Libros con stock bajo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Solo libros con stock <= 10', () => {",
+                  "  pm.response.json().results.forEach((book) => pm.expect(book.stock_quantity).to.be.at.most(10));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/low-stock?threshold=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "low-stock"
+              ],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "10",
+                  "description": "Libros con stock_quantity <= threshold (10 si se omite)"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Calcular precio de venta (Bs.)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const calc = pm.response.json();",
+                  "pm.test('Desglose en bolívares con margen del 40 %', () => {",
+                  "  pm.expect(calc).to.include.all.keys('book_id', 'cost_usd', 'exchange_rate', 'cost_local', 'margin_percentage',",
+                  "    'selling_price_local', 'currency', 'rate_source', 'calculation_timestamp');",
+                  "  pm.expect(calc.book_id).to.eql(Number(pm.collectionVariables.get('bookId')));",
+                  "  pm.expect(calc.currency).to.eql('VES');",
+                  "  pm.expect(calc.margin_percentage).to.eql(40);",
+                  "  pm.expect(calc.rate_source).to.be.oneOf(['live', 'default']);",
+                  "});",
+                  "pm.test('Precio = costo en USD × tasa × 1,40 (a 2 decimales)', () => {",
+                  "  pm.expect(calc.cost_local).to.be.closeTo(calc.cost_usd * calc.exchange_rate, 0.01);",
+                  "  pm.expect(calc.selling_price_local).to.be.closeTo(calc.cost_local * 1.4, 0.01);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/{{bookId}}/calculate-price",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "{{bookId}}",
+                "calculate-price"
+              ]
+            },
+            "description": "Calcula el precio de venta en bolívares con la tasa oficial del BCV (DolarAPI) y un margen del 40 %, y lo guarda en el libro.\n\nSi DolarAPI falla, usa `DEFAULT_EXCHANGE_RATE` y responde `rate_source: \"default\"`; si además esa variable está vacía, responde 503."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Errores",
+      "description": "Respuestas de error de la API (en JSON y en español).",
+      "item": [
+        {
+          "name": "400 - Datos inválidos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Un error por cada campo inválido', () => {",
+                  "  pm.expect(pm.response.json()).to.have.all.keys('isbn', 'cost_usd', 'stock_quantity', 'supplier_country');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/books",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Libro inválido\",\n  \"author\": \"Anónimo\",\n  \"isbn\": \"123\",\n  \"cost_usd\": 0,\n  \"stock_quantity\": -1,\n  \"category\": \"Pruebas\",\n  \"supplier_country\": \"ESP\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "400 - ISBN duplicado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Rechaza el ISBN aunque cambie el formato', () => {",
+                  "  pm.expect(pm.response.json().isbn).to.eql(['Ya existe libro con este isbn.']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/books",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Ficciones (duplicado)\",\n  \"author\": \"Jorge Luis Borges\",\n  \"isbn\": \"978{{isbnSuffix}}\",\n  \"cost_usd\": 13.5,\n  \"stock_quantity\": 4,\n  \"category\": \"Literatura Latinoamericana\",\n  \"supplier_country\": \"AR\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "El ISBN de «Crear libro», escrito sin guion: la API lo normaliza antes de comprobar que sea único."
+          }
+        },
+        {
+          "name": "400 - Búsqueda sin categoría",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Indica el parámetro que falta', () => pm.expect(pm.response.json()).to.have.property('category'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "search"
+              ]
+            }
+          }
+        },
+        {
+          "name": "400 - Umbral no numérico",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Indica el parámetro inválido', () => pm.expect(pm.response.json()).to.have.property('threshold'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/low-stock?threshold=diez",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "low-stock"
+              ],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "diez",
+                  "description": "Tiene que ser un número entero"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "404 - Libro inexistente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('Mensaje en español', () => pm.expect(pm.response.json().detail).to.eql('No encontrado.'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/99999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "99999"
+              ]
+            }
+          }
+        },
+        {
+          "name": "404 - Calcular precio de libro inexistente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books/99999/calculate-price",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books",
+                "99999",
+                "calculate-price"
+              ]
+            }
+          }
+        },
+        {
+          "name": "415 - Cuerpo que no es JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('415 Unsupported Media Type', () => pm.response.to.have.status(415));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/books",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "books"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "title",
+                  "value": "Ficciones"
+                },
+                {
+                  "key": "author",
+                  "value": "Jorge Luis Borges"
+                },
+                {
+                  "key": "isbn",
+                  "value": "978{{isbnSuffix}}"
+                },
+                {
+                  "key": "cost_usd",
+                  "value": "13.5"
+                },
+                {
+                  "key": "stock_quantity",
+                  "value": "4"
+                },
+                {
+                  "key": "category",
+                  "value": "Literatura Latinoamericana"
+                },
+                {
+                  "key": "supplier_country",
+                  "value": "AR"
+                }
+              ]
+            },
+            "description": "La API solo acepta cuerpos JSON: un formulario de otra web puede enviar urlencoded, multipart o text/plain sin preflight CORS, y sin autenticación no hay chequeo CSRF. En Postman, usa Body → raw → JSON."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Eliminar libro",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/books/{{bookId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "books",
+            "{{bookId}}"
+          ]
+        },
+        "description": "Borra el libro de «Crear libro». Va al final porque «400 - ISBN duplicado» lo necesita."
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "bookId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "isbnSuffix",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "expensiveBookId",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
