@@ -142,7 +142,8 @@ CORS_ALLOWED_ORIGINS = [
 # Django REST Framework
 
 REST_FRAMEWORK = {
-    # Paginación por número de página (?page=N) con 10 resultados por defecto.
+    # Paginación por número de página (?page=N) con 10 resultados por defecto. BookViewSet usa
+    # BookPagination (books/views.py), que además acepta ?page_size=N hasta 50.
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
     # Los Decimal se devuelven como números JSON (15.99) en vez de strings ("15.99").
@@ -154,4 +155,7 @@ REST_FRAMEWORK = {
     # preflight CORS y, sin autenticación, no hay chequeo CSRF; aceptarlos permitiría crear libros
     # desde cualquier página. La SPA y Postman envían JSON. El resto recibe 415.
     'DEFAULT_PARSER_CLASSES': ['rest_framework.parsers.JSONParser'],
+    # Errores de la API: 404 en español, 400 para peticiones que superan los límites de Django
+    # y 500 en JSON (ver books/exceptions.py).
+    'EXCEPTION_HANDLER': 'books.exceptions.json_exception_handler',
 }
