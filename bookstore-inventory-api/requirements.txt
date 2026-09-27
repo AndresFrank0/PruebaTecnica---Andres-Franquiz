@@ -1,0 +1,8 @@
+# Dependencias del backend. Instalar con: pip install -r requirements.txt
+
+# Django 5.2 LTS (soporta Python 3.14 desde la 5.2.8)
+Django>=5.2.8,<6.0
+# Django REST Framework: serializers, viewsets, router y paginación
+djangorestframework>=3.16,<4.0
+# Cabeceras CORS para que la SPA (otro origen) pueda consumir la API
+django-cors-headers>=4.6,<5.0

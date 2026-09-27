@@ -1,0 +1,12 @@
+# Python: entorno virtual, bytecode y base de datos local
+.venv/
+__pycache__/
+*.pyc
+db.sqlite3
+
+# Frontend (Node/Vite): dependencias y build de producción
+node_modules/
+dist/
+
+# Variables de entorno locales (pueden contener secretos)
+.env
