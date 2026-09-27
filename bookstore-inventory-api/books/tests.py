@@ -1,18 +1,23 @@
+import io
 import json
 import os
 import re
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework.test import APITestCase
 from rest_framework.validators import UniqueValidator
 
+from . import services
 from .models import Book
 from .serializers import BookSerializer
 
@@ -334,3 +339,142 @@ class BookAdminTests(TestCase):
         r = self.client.get('/admin/books/book/', {'q': 'Cosmos'})
         self.assertContains(r, 'Cosmos')
         self.assertNotContains(r, 'El Quijote')
+
+
+class SampleBooksFixtureTests(APITestCase):
+    fixtures = ['sample_books']
+
+    def test_fixture_books_pass_validation(self):
+        # loaddata no valida: cada libro de ejemplo debe cumplir las mismas reglas que la API.
+        for book in Book.objects.all():
+            serializer = BookSerializer(book, data=BookSerializer(book).data)
+            self.assertTrue(serializer.is_valid(), (book.isbn, serializer.errors))
+            # El serializer normaliza el ISBN al validar: el del fixture ya tiene que venir normalizado.
+            self.assertEqual(serializer.validated_data['isbn'], book.isbn)
+
+    def test_fixture_matches_the_documented_counts(self):
+        # Cifras que citan el README y el QA de la SPA: 12 libros, 6 con stock bajo, 4 de "literatura".
+        self.assertEqual(self.client.get('/books').data['count'], 12)
+        self.assertEqual(self.client.get('/books/low-stock').data['count'], 6)
+        self.assertEqual(self.client.get('/books/search', {'category': 'literatura'}).data['count'], 4)
+
+
+@override_settings(DEFAULT_EXCHANGE_RATE='800.00')
+class CalculatePriceTests(APITestCase):
+    def setUp(self):
+        self.book = make_book()
+        self.url = f'/books/{self.book.id}/calculate-price'
+
+    @patch('books.services.fetch_live_rate', return_value=Decimal('855.6625'))
+    def test_calculates_and_persists_price_with_live_rate(self, _):
+        r = self.client.post(self.url)
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body['book_id'], self.book.id)
+        self.assertEqual(body['cost_usd'], 15.99)
+        self.assertEqual(body['exchange_rate'], 855.6625)
+        self.assertEqual(body['cost_local'], 13682.04)  # 15.99 × 855.6625 = 13682.043375
+        self.assertEqual(body['margin_percentage'], 40)
+        self.assertEqual(body['selling_price_local'], 19154.86)  # 13682.04 × 1.40 = 19154.856
+        self.assertEqual(body['currency'], 'VES')
+        self.assertEqual(body['rate_source'], 'live')
+        self.assertIn('calculation_timestamp', body)
+        self.book.refresh_from_db()
+        self.assertEqual(self.book.selling_price_local, Decimal('19154.86'))
+
+    @patch('books.services.fetch_live_rate', side_effect=OSError('API caída'))
+    def test_uses_default_rate_when_api_fails(self, _):
+        with self.assertLogs('books.services', 'WARNING'):
+            r = self.client.post(self.url)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['rate_source'], 'default')
+        self.assertEqual(r.json()['exchange_rate'], 800.0)
+
+    @override_settings(DEFAULT_EXCHANGE_RATE='')
+    @patch('books.services.fetch_live_rate', side_effect=OSError('API caída'))
+    def test_returns_503_when_api_fails_and_no_default(self, _):
+        with self.assertLogs('books.services', 'WARNING'):
+            self.assertEqual(self.client.post(self.url).status_code, 503)
+        self.book.refresh_from_db()
+        self.assertIsNone(self.book.selling_price_local)
+
+    @patch('books.services.fetch_live_rate', side_effect=OSError('API caída'))
+    def test_invalid_default_rate_returns_503(self, _):
+        # Una tasa por defecto mal configurada no debe dar un 500 ("855,66", "Infinity", "NaN")
+        # ni precios en 0 ("0").
+        for value in ('855,66', '0', 'abc', 'Infinity', 'NaN'):
+            with self.settings(DEFAULT_EXCHANGE_RATE=value), self.assertLogs('books.services', 'ERROR'):
+                self.assertEqual(self.client.post(self.url).status_code, 503, value)
+        self.book.refresh_from_db()
+        self.assertIsNone(self.book.selling_price_local)
+
+    @patch('books.services.fetch_live_rate')
+    def test_returns_404_for_missing_book(self, fetch):
+        self.assertEqual(self.client.post('/books/9999/calculate-price').status_code, 404)
+        fetch.assert_not_called()  # no se consulta la API para un libro que no existe
+
+    def test_book_deleted_during_api_call_returns_404(self):
+        def fetch():
+            Book.objects.filter(pk=self.book.pk).delete()  # otra petición lo borra mientras tanto
+            return Decimal('855.6625')
+        with patch('books.services.fetch_live_rate', side_effect=fetch):
+            self.assertEqual(self.client.post(self.url).status_code, 404)
+
+    def test_uses_cost_edited_during_api_call(self):
+        def fetch():
+            Book.objects.filter(pk=self.book.pk).update(cost_usd=Decimal('30.00'))
+            return Decimal('855.6625')
+        with patch('books.services.fetch_live_rate', side_effect=fetch):
+            body = self.client.post(self.url).json()
+        self.assertEqual(body['cost_usd'], 30.0)
+        self.assertEqual(body['selling_price_local'], 35937.83)  # 30 × 855,6625 = 25669,88 → × 1,40
+
+    def test_only_touches_price_and_updated_at(self):
+        old = timezone.now() - timedelta(days=1)
+        Book.objects.filter(pk=self.book.pk).update(updated_at=old)
+        def fetch():  # otra petición cambia el stock mientras se consulta la API
+            Book.objects.filter(pk=self.book.pk).update(stock_quantity=99)
+            return Decimal('855.6625')
+        with patch('books.services.fetch_live_rate', side_effect=fetch):
+            self.client.post(self.url)
+        self.book.refresh_from_db()
+        self.assertEqual(self.book.stock_quantity, 99)
+        self.assertGreater(self.book.updated_at, old)
+
+    @patch('books.services.fetch_live_rate', return_value=Decimal('855.6625'))
+    def test_rounds_half_up_at_each_step(self, _):
+        # 5,20 × 855,6625 = 4449,445 → 4449,45 (HALF_EVEN daría 4449,44).
+        # 4449,45 × 1,40 = 6229,23 (redondear solo al final daría 6229,22).
+        Book.objects.filter(pk=self.book.pk).update(cost_usd=Decimal('5.20'))
+        body = self.client.post(self.url).json()
+        self.assertEqual(body['cost_local'], 4449.45)
+        self.assertEqual(body['selling_price_local'], 6229.23)
+
+    def test_options_does_not_describe_a_book_body(self):
+        # El endpoint no lee el cuerpo: OPTIONS (y la browsable API) no deben ofrecer los campos de Book.
+        self.assertEqual(self.client.options(self.url).json()['actions']['POST'], {})
+
+    @patch('urllib.request.urlopen')
+    def test_fetch_live_rate_reads_promedio_and_sends_user_agent(self, urlopen):
+        urlopen.return_value.__enter__.return_value = io.BytesIO(
+            b'{"moneda": "USD", "fuente": "oficial", "promedio": 855.6625,'
+            b' "fechaActualizacion": "2026-09-25T00:00:00-04:00"}'
+        )
+        self.assertEqual(services.fetch_live_rate(), Decimal('855.6625'))
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header('User-agent'), services.USER_AGENT)
+        self.assertEqual(request.full_url, settings.EXCHANGE_API_URL)
+        self.assertEqual(urlopen.call_args.kwargs['timeout'], 5)  # sin timeout, una API colgada cuelga la petición
+
+    @patch('urllib.request.urlopen')
+    def test_invalid_promedio_falls_back_to_default(self, urlopen):
+        urlopen.return_value.__enter__.return_value = io.BytesIO(b'{"promedio": null}')
+        with self.assertLogs('books.services', 'WARNING'):
+            self.assertEqual(services.get_exchange_rate(), (Decimal('800.00'), 'default'))
+
+    @patch('books.services.calculate_price', side_effect=RuntimeError('boom'))
+    def test_unexpected_error_returns_json_500(self, _):
+        with self.assertLogs('books.exceptions', 'ERROR'):
+            r = self.client.post(self.url)
+        self.assertEqual(r.status_code, 500)
+        self.assertEqual(r.json()['detail'], 'Error interno del servidor.')
