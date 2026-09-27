@@ -1,0 +1,63 @@
+/* Todo un 25 % más pequeño en pantallas de escritorio (ratón o trackpad). Pico sube la fuente del :root
+   con el ancho de la pantalla (--pico-font-size, de 100 % a 131,25 %) y casi todo lo demás va en rem,
+   así que se escala entero. En pantallas táctiles (teléfono, también en horizontal, y tablet) se queda
+   como está: con 12-14 px se lee mal e iOS hace zoom al tocar un campo de menos de 16 px. */
+@media (min-width: 768px) and (pointer: fine) {
+  :root {
+    font-size: calc(var(--pico-font-size) * 0.75);
+  }
+}
+
+/* Botones de los filtros: menos relleno lateral (Pico pone 2rem) y el texto en una línea, para que
+   no queden más altos que el campo de al lado. */
+fieldset[role="group"] button {
+  --pico-form-element-spacing-horizontal: 1rem;
+  white-space: nowrap;
+}
+
+/* Botones de acción compactos en las filas de la tabla, centrados en la fila (sin el margen inferior
+   que Pico pone a los grupos). */
+td [role="group"] {
+  margin-bottom: 0;
+}
+
+td [role="group"] button {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+/* Encabezados ordenables: un botón que se ve como el texto del encabezado. */
+th button.sort {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+th button.sort:hover {
+  color: var(--pico-primary);
+}
+
+th button.sort:focus-visible {
+  outline: var(--pico-outline-width) solid var(--pico-primary);
+}
+
+/* La flecha ↕ de las columnas sin ordenar, tenue; la ▲/▼ de la columna activa, normal. */
+th:not([aria-sort]) button.sort span {
+  opacity: 0.4;
+}
+
+/* Con un modal abierto, la página de fondo no se desplaza. El hueco de la barra de desplazamiento
+   se reserva siempre: si no, al ocultarla el contenido se corre a la derecha en cada modal. */
+html {
+  scrollbar-gutter: stable;
+}
+
+html:has(dialog[open]) {
+  overflow: hidden;
+}
